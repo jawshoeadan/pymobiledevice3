@@ -404,8 +404,8 @@ class TunneldRunner:
                 if not created_task and connection_type in ('usbmux', None):
                     task_identifier = f'usbmux-{udid}'
                     try:
-                        pr = pair_records.get_local_pairing_record("00008130-001E696C1803401C", pairing_records_cache_folder=common.get_home_folder())
-                        service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname="100.104.91.53", pair_record=pr))
+                        pr = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
+                        service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pr))
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
                                                                  queue=queue),
