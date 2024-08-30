@@ -412,7 +412,7 @@ class TunneldRunner:
                         else:
                             pair_record = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
                         #print(pair_record)
-                        pr = plistlib.loads(pair_record)
+                        pr = plistlib.loads(bytes(pair_record))
                         #print(pr)
                         service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pr))
                         task = asyncio.create_task(
