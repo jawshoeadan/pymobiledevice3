@@ -405,16 +405,18 @@ class TunneldRunner:
             try:
                 if not created_task and connection_type in ('usbmux-tcp', None):
                     task_identifier = f'usbmux-tcp-{udid}'
+                    pair_record_unwrapped = None
                     try:
                     #    pr = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
                         if pair_record is not None:
                             pair_record = base64.b64decode(pair_record)
+                            pair_record_unwrapped = plistlib.loads(pair_record)
                         else:
-                            pair_record = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
-                        #print(pair_record)
-                        pr = plistlib.loads(bytes(pair_record))
+                            pair_record_unwrapped = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
+                       # print(pair_record_unwrapped)
+                        
                         #print(pr)
-                        service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pr))
+                        service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_unwrapped))
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
                                                                  queue=queue),
