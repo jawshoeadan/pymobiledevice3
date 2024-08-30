@@ -6,6 +6,7 @@ import os
 import plistlib
 import signal
 import traceback
+import base64
 from contextlib import asynccontextmanager, suppress
 from typing import Dict, List, Mapping, Optional, Tuple, Union
 
@@ -393,7 +394,7 @@ class TunneldRunner:
 
         @self._app.get('/start-tunnel')
         async def start_tunnel(
-                udid: str, ip: Optional[str] = None, connection_type: Optional[str] = None, pair_record: Optional[bytes] = None) -> fastapi.Response:
+                udid: str, ip: Optional[str] = None, connection_type: Optional[str] = None, pair_record: Optional[str] = None) -> fastapi.Response:
             udid_tunnels = [t.tunnel for t in self._tunneld_core.tunnel_tasks.values() if t.udid == udid]
             if len(udid_tunnels) > 0:
                 return generate_tunnel_response(udid_tunnels[0])
@@ -406,8 +407,10 @@ class TunneldRunner:
                     task_identifier = f'usbmux-tcp-{udid}'
                     try:
                     #    pr = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
+                        pair_record = base64.b64decode(pair_record)
+                        print(pair_record)
                         pr = plistlib.loads(pair_record)
-                        #print(pr)
+                        print(pr)
                         service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pr))
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
