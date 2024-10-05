@@ -47,7 +47,6 @@ from srptools.constants import PRIME_3072, PRIME_3072_GEN
 
 from pymobiledevice3.lockdown_service_provider import LockdownServiceProvider
 from pymobiledevice3.osu.os_utils import get_os_utils
-from pymobiledevice3.services.lockdown_service import LockdownService
 
 try:
     from sslpsk_pmd3.sslpsk import SSLPSKContext
@@ -820,8 +819,10 @@ class CoreDeviceTunnelService(RemotePairingProtocol, RemoteService):
             self.version = response['ServiceVersion']
             await RemotePairingProtocol.connect(self, autopair=autopair)
             self.hostname = self.service.address[0]
-        except:  # noqa: E722
+        except Exception as e:  # noqa: E722
             await self.service.close()
+            if isinstance(e, UserDeniedPairingError):
+                raise
 
     async def close(self) -> None:
         await self.rsd.close()
@@ -905,20 +906,12 @@ class RemotePairingManualPairingService(RemotePairingTunnelService):
         await RemotePairingProtocol.connect(self, autopair=autopair)
 
 
-class CoreDeviceTunnelProxy(StartTcpTunnel, LockdownService):
+class CoreDeviceTunnelProxy(StartTcpTunnel):
     SERVICE_NAME = 'com.apple.internal.devicecompute.CoreDeviceProxy'
 
     def __init__(self, lockdown: LockdownServiceProvider) -> None:
-        LockdownService.__init__(self, lockdown, self.SERVICE_NAME)
         self._lockdown = lockdown
         self._service: Optional[ServiceConnection] = None
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        self._loop = loop
 
     @property
     def remote_identifier(self) -> str:
@@ -1026,7 +1019,8 @@ async def get_core_device_tunnel_services(
         udid: Optional[str] = None) -> List[CoreDeviceTunnelService]:
     result = []
     for rsd in await get_rsds(bonjour_timeout=bonjour_timeout, udid=udid):
-        if udid is None and Version(rsd.product_version) < Version('17.0'):
+        if udid is None and ((Version(rsd.product_version) < Version('17.0'))
+                             and not rsd.product_type.startswith('RealityDevice')):
             logger.debug(f'Skipping {rsd.udid}:, iOS {rsd.product_version} < 17.0')
             await rsd.close()
             continue
