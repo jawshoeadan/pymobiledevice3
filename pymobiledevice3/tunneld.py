@@ -2,6 +2,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import multiprocessing
 import os
 import plistlib
 import signal
@@ -13,6 +14,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, Union
 import construct
 import fastapi
 import requests
+from pymobiledevice3.services.heartbeat import HeartbeatService
 import uvicorn
 from construct import StreamError
 from fastapi import FastAPI
@@ -328,10 +330,42 @@ class TunneldCore:
             tunnel.task.cancel()
         self.tunnel_tasks = {}
 
-
+def heartbeat_service_runner(udid: str, ip: Optional[str], pair_record_data: Optional[bytes]):
+            try:
+                logger.info(f"Starting heartbeat service runner for UDID: {udid}")
+                
+                
+                logger.debug(f"Creating ld_service_provider for UDID: {udid}")
+                ld_service_provider = create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_data)
+                
+                logger.debug("Creating HeartbeatService")
+                hbs = HeartbeatService(ld_service_provider)
+                
+                logger.info("Starting HeartbeatService")
+                hbs.start()  # This is your infinite loop
+            except Exception as e:
+                logger.error(f"Error in heartbeat service runner: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
 class TunneldRunner:
     """ TunneldRunner orchestrate between the webserver and TunneldCore """
+    def run_in_subprocess(self, target_method, *args):
+        process = multiprocessing.Process(target=target_method, args=args)
+        process.start()
+        return process
+    def get_or_create_heartbeat_process(self, udid: str, ip: Optional[str], pair_record_unwrapped: Optional[dict]) -> multiprocessing.Process:
+        if udid in self._heartbeat_processes:
+            process = self._heartbeat_processes[udid]
+            if process.is_alive():
+                logger.info(f"Existing heartbeat process found for UDID: {udid}")
+                return process
+            else:
+                logger.info(f"Existing heartbeat process for UDID: {udid} is not alive. Creating a new one.")
+                del self._heartbeat_processes[udid]
 
+        logger.info(f"Creating new heartbeat process for UDID: {udid}")
+        process = self.run_in_subprocess(heartbeat_service_runner, udid, ip, pair_record_unwrapped)
+        self._heartbeat_processes[udid] = process
+        return process
     @classmethod
     def create(cls, host: str, port: int, protocol: TunnelProtocol = TunnelProtocol.QUIC, usb_monitor: bool = True,
                wifi_monitor: bool = True, usbmux_monitor: bool = True, mobdev2_monitor: bool = True) -> None:
@@ -354,7 +388,8 @@ class TunneldRunner:
         self._app = FastAPI(lifespan=lifespan)
         self._tunneld_core = TunneldCore(protocol=protocol, wifi_monitor=wifi_monitor, usb_monitor=usb_monitor,
                                          usbmux_monitor=usbmux_monitor, mobdev2_monitor=mobdev2_monitor)
-
+        self._heartbeat_processes: Dict[str, multiprocessing.Process] = {}
+    
         @self._app.get('/')
         async def list_tunnels() -> Mapping[str, List[Mapping]]:
             """ Retrieve the available tunnels and format them as {UUID: TUNNEL_ADDRESS} """
@@ -396,6 +431,12 @@ class TunneldRunner:
                 status_code=200,
                 content=json.dumps({'interface': tunnel.interface, 'port': tunnel.port, 'address': tunnel.address}))
 
+        def run_in_subprocess( target_method, *args):
+            process = multiprocessing.Process(target=target_method, args=args)
+            process.start()
+            return process
+        
+
         @self._app.get('/start-tunnel')
         async def start_tunnel(
                 udid: str, ip: Optional[str] = None, connection_type: Optional[str] = None, pair_record: Optional[str] = None) -> fastapi.Response:
@@ -423,7 +464,13 @@ class TunneldRunner:
                             pair_record_unwrapped = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
 
                         logger.debug(f"Creating CoreDeviceTunnelProxy for UDID: {udid}")
-                        service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_unwrapped))
+                        ld_service_provider = create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_unwrapped)
+                        if udid not in self._heartbeat_processes:
+                            background_process = self.get_or_create_heartbeat_process(udid, ip, pair_record_unwrapped)
+                            return fastapi.Response(status_code=200, content='Started heartbeat, try again in a second')
+                        else:
+                            background_process = self.get_or_create_heartbeat_process(udid, ip, pair_record_unwrapped)
+                        service = CoreDeviceTunnelProxy(ld_service_provider)
                         logger.info(f"CoreDeviceTunnelProxy created: {service}")
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
