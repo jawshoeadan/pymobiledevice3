@@ -33,6 +33,7 @@ from pymobiledevice3.remote.utils import get_rsds, stop_remoted
 from pymobiledevice3.utils import asyncio_print_traceback, get_asyncio_loop
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 TUNNELD_DEFAULT_ADDRESS = ('127.0.0.1', 49151)
 
@@ -213,6 +214,9 @@ class TunneldCore:
                     logger.debug(
                         f'not establishing tunnel from {asyncio.current_task().get_name()} '
                         f'since there is already an active one for same udid')
+        except construct.StreamError as e:
+            logger.error(f"StreamError details: {str(e)}")
+            logger.error(f"StreamError occurred at: {traceback.format_exc()}")
         except asyncio.CancelledError:
             pass
         except (ConnectionResetError, StreamError) as e:
@@ -395,8 +399,10 @@ class TunneldRunner:
         @self._app.get('/start-tunnel')
         async def start_tunnel(
                 udid: str, ip: Optional[str] = None, connection_type: Optional[str] = None, pair_record: Optional[str] = None) -> fastapi.Response:
+            logger.info(f"Starting tunnel for UDID: {udid}, IP: {ip}, Connection Type: {connection_type}")
             udid_tunnels = [t.tunnel for t in self._tunneld_core.tunnel_tasks.values() if t.udid == udid]
             if len(udid_tunnels) > 0:
+                logger.info(f"Existing tunnel found for UDID: {udid}")
                 return generate_tunnel_response(udid_tunnels[0])
 
             queue = asyncio.Queue()
@@ -407,27 +413,32 @@ class TunneldRunner:
                     task_identifier = f'usbmux-tcp-{udid}'
                     pair_record_unwrapped = None
                     try:
-                    #    pr = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
+                        logger.debug(f"Attempting usbmux-tcp connection for UDID: {udid}")
                         if pair_record is not None:
+                            logger.debug("Decoding provided pair record")
                             pair_record = base64.b64decode(pair_record)
                             pair_record_unwrapped = plistlib.loads(pair_record)
                         else:
+                            logger.debug("Fetching local pairing record")
                             pair_record_unwrapped = pair_records.get_local_pairing_record(udid, pairing_records_cache_folder=common.get_home_folder())
-                       # print(pair_record_unwrapped)
-                        
-                        #print(pr)
+
+                        logger.debug(f"Creating CoreDeviceTunnelProxy for UDID: {udid}")
                         service = CoreDeviceTunnelProxy(create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_unwrapped))
+                        logger.info(f"CoreDeviceTunnelProxy created: {service}")
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
                                                                  queue=queue),
                             name=f'start-tunnel-task-{task_identifier}')
                         self._tunneld_core.tunnel_tasks[task_identifier] = TunnelTask(task=task, udid=udid)
                         created_task = True
-                    except (ConnectionFailedError, InvalidServiceError, MuxException):
-                        pass
+                        logger.info(f"usbmux-tcp task created for UDID: {udid}")
+                    except (ConnectionFailedError, InvalidServiceError, MuxException, Exception) as e:
+                        logger.error(f"Error in usbmux-tcp connection: {str(e)}")
+                        logger.debug(f"Full traceback: {traceback.format_exc()}")
                 if not created_task and connection_type in ('usbmux', None):
                     task_identifier = f'usbmux-{udid}'
                     try:
+                        logger.debug(f"Attempting usbmux connection for UDID: {udid}")
                         service = CoreDeviceTunnelProxy(create_using_usbmux(udid))
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(task_identifier, service, protocol=TunnelProtocol.TCP,
@@ -435,13 +446,17 @@ class TunneldRunner:
                             name=f'start-tunnel-task-{task_identifier}')
                         self._tunneld_core.tunnel_tasks[task_identifier] = TunnelTask(task=task, udid=udid)
                         created_task = True
-                    except (ConnectionFailedError, InvalidServiceError, MuxException):
-                        pass
+                        logger.info(f"usbmux task created for UDID: {udid}")
+                    except (ConnectionFailedError, InvalidServiceError, MuxException) as e:
+                        logger.error(f"Error in usbmux connection: {str(e)}")
+                        logger.debug(f"Full traceback: {traceback.format_exc()}")
                 if connection_type in ('usb', None):
+                    logger.debug(f"Attempting USB connection for UDID: {udid}")
                     for rsd in await get_rsds(udid=udid):
                         rsd_ip = rsd.service.address[0]
                         if ip is not None and rsd_ip != ip:
                             await rsd.close()
+                            logger.debug(f"Skipping RSD with IP {rsd_ip} as it doesn't match requested IP {ip}")
                             continue
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(rsd_ip,
@@ -450,11 +465,14 @@ class TunneldRunner:
                             name=f'start-tunnel-usb-{rsd_ip}')
                         self._tunneld_core.tunnel_tasks[rsd_ip] = TunnelTask(task=task, udid=rsd.udid)
                         created_task = True
+                        logger.info(f"USB task created for UDID: {udid}, IP: {rsd_ip}")
                 if not created_task and connection_type in ('wifi', None):
+                    logger.debug(f"Attempting WiFi connection for UDID: {udid}")
                     for remotepairing in await get_remote_pairing_tunnel_services(udid=udid):
                         remotepairing_ip = remotepairing.hostname
                         if ip is not None and remotepairing_ip != ip:
                             await remotepairing.close()
+                            logger.debug(f"Skipping remote pairing with IP {remotepairing_ip} as it doesn't match requested IP {ip}")
                             continue
                         task = asyncio.create_task(
                             self._tunneld_core.start_tunnel_task(remotepairing_ip, remotepairing, queue=queue),
@@ -462,7 +480,10 @@ class TunneldRunner:
                         self._tunneld_core.tunnel_tasks[remotepairing_ip] = TunnelTask(
                             task=task, udid=remotepairing.remote_identifier)
                         created_task = True
+                        logger.info(f"WiFi task created for UDID: {udid}, IP: {remotepairing_ip}")
             except Exception as e:
+                logger.error(f"Unexpected error in start_tunnel: {str(e)}")
+                logger.debug(f"Full traceback: {traceback.format_exc()}")
                 return fastapi.Response(status_code=501,
                                         content=json.dumps({'error': {
                                             'exception': e.__class__.__name__,
@@ -470,12 +491,16 @@ class TunneldRunner:
                                         }}))
 
             if not created_task:
-                return fastapi.Response(status_code=501, content=json.dumps({'error': 'task not not created'}))
+                logger.warning(f"No task created for UDID: {udid}")
+                return fastapi.Response(status_code=501, content=json.dumps({'error': 'task not created'}))
 
+            logger.info(f"Waiting for tunnel creation for UDID: {udid}")
             tunnel: Optional[TunnelResult] = await queue.get()
             if tunnel is not None:
+                logger.info(f"Tunnel created successfully for UDID: {udid}")
                 return generate_tunnel_response(tunnel)
             else:
+                logger.error(f"Tunnel creation failed for UDID: {udid}")
                 return fastapi.Response(status_code=404,
                                         content=json.dumps({'error': 'something went wrong during tunnel creation'}))
 
