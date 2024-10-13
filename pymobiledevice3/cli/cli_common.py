@@ -6,7 +6,7 @@ import os
 import sys
 import uuid
 from functools import wraps
-from typing import Any, Callable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Optional
 
 import click
 import coloredlogs
@@ -23,10 +23,14 @@ from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscove
 from pymobiledevice3.tunneld import TUNNELD_DEFAULT_ADDRESS, async_get_tunneld_devices
 from pymobiledevice3.usbmux import select_devices_by_connection_type
 
-USBMUX_OPTION_HELP = 'usbmuxd listener address (in the form of either /path/to/unix/socket OR HOST:PORT'
 COLORED_OUTPUT = True
 UDID_ENV_VAR = 'PYMOBILEDEVICE3_UDID'
+TUNNEL_ENV_VAR = 'PYMOBILEDEVICE3_TUNNEL'
+USBMUX_ENV_VAR = 'PYMOBILEDEVICE3_USBMUX'
 OSUTILS = get_os_utils()
+
+USBMUX_OPTION_HELP = (f'usbmuxd listener address (in the form of either /path/to/unix/socket OR HOST:PORT). '
+                      f'Can be specified via {USBMUX_ENV_VAR} envvar')
 
 
 class RSDOption(Option):
@@ -78,7 +82,7 @@ def print_json(buf, colored: Optional[bool] = None, default=default_json_encoder
     formatted_json = json.dumps(buf, sort_keys=True, indent=4, default=default)
     if colored and os.isatty(sys.stdout.fileno()):
         colorful_json = highlight(formatted_json, lexers.JsonLexer(),
-                                  formatters.TerminalTrueColorFormatter(style='stata-dark'))
+                                  formatters.Terminal256Formatter(style='stata-dark'))
         print(colorful_json)
         return colorful_json
     else:
@@ -89,7 +93,7 @@ def print_json(buf, colored: Optional[bool] = None, default=default_json_encoder
 def print_hex(data, colored=True):
     hex_dump = hexdump.hexdump(data, result='return')
     if colored:
-        print(highlight(hex_dump, lexers.HexdumpLexer(), formatters.TerminalTrueColorFormatter(style='native')))
+        print(highlight(hex_dump, lexers.HexdumpLexer(), formatters.Terminal256Formatter(style='native')))
     else:
         print(hex_dump, end='\n\n')
 
@@ -103,8 +107,12 @@ def set_color_flag(ctx, param, value) -> None:
     COLORED_OUTPUT = value
 
 
+def isatty() -> bool:
+    return os.isatty(sys.stdout.fileno())
+
+
 def user_requested_colored_output() -> bool:
-    return COLORED_OUTPUT and os.isatty(sys.stdout.fileno())
+    return COLORED_OUTPUT and isatty()
 
 
 def get_last_used_terminal_formatting(buf: str) -> str:
@@ -122,7 +130,7 @@ def sudo_required(func):
     return wrapper
 
 
-def prompt_selection(choices: List[Any], message: str, idx: bool = False) -> Any:
+def prompt_selection(choices: list[Any], message: str, idx: bool = False) -> Any:
     question = [inquirer3.List('selection', message=message, choices=choices, carousel=True)]
     try:
         result = inquirer3.prompt(question, theme=GreenPassion(), raise_keyboard_interrupt=True)
@@ -131,12 +139,12 @@ def prompt_selection(choices: List[Any], message: str, idx: bool = False) -> Any
     return result['selection'] if not idx else choices.index(result['selection'])
 
 
-def prompt_device_list(device_list: List):
+def prompt_device_list(device_list: list):
     return prompt_selection(device_list, 'Choose device')
 
 
 def choose_service_provider(callback: Callable):
-    def wrap_callback_calling(**kwargs: Mapping):
+    def wrap_callback_calling(**kwargs: dict) -> None:
         service_provider = None
         lockdown_service_provider = kwargs.pop('lockdown_service_provider', None)
         rsd_service_provider_manually = kwargs.pop('rsd_service_provider_manually', None)
@@ -178,7 +186,7 @@ class LockdownCommand(BaseServiceProviderCommand):
         self.usbmux_address = None
         self.params[:0] = [
             click.Option(('usbmux', '--usbmux'), callback=self.usbmux, expose_value=False,
-                         help=USBMUX_OPTION_HELP),
+                         envvar=USBMUX_ENV_VAR, help=USBMUX_OPTION_HELP),
             click.Option(('lockdown_service_provider', '--udid'), envvar=UDID_ENV_VAR, callback=self.udid,
                          help=f'Device unique identifier. You may pass {UDID_ENV_VAR} environment variable to pass this'
                               f' option as well'),
@@ -217,14 +225,15 @@ class RSDCommand(BaseServiceProviderCommand):
                       help='\b\n'
                            'RSD hostname and port number (as provided by a `start-tunnel` subcommand).'),
             RSDOption(('rsd_service_provider_using_tunneld', '--tunnel'), callback=self.tunneld,
-                      mutually_exclusive=['rsd_service_provider_manually'],
+                      mutually_exclusive=['rsd_service_provider_manually'], envvar=TUNNEL_ENV_VAR,
                       help='\b\n'
                            'Either an empty string to force tunneld device selection, or a UDID of a tunneld '
                            'discovered device.\n'
-                           'The string may be suffixed with :PORT in case tunneld is not serving at the default port.')
+                           'The string may be suffixed with :PORT in case tunneld is not serving at the default port.\n'
+                           f'This option may also be transferred as an environment variable: {TUNNEL_ENV_VAR}')
         ]
 
-    def rsd(self, ctx, param: str, value: Optional[Tuple[str, int]]) -> Optional[RemoteServiceDiscoveryService]:
+    def rsd(self, ctx, param: str, value: Optional[tuple[str, int]]) -> Optional[RemoteServiceDiscoveryService]:
         if value is not None:
             rsd = RemoteServiceDiscoveryService(value)
             asyncio.run(rsd.connect(), debug=True)
@@ -235,6 +244,7 @@ class RSDCommand(BaseServiceProviderCommand):
         if udid is None:
             return
 
+        udid = udid.strip()
         port = TUNNELD_DEFAULT_ADDRESS[1]
         if ':' in udid:
             udid, port = udid.split(':')

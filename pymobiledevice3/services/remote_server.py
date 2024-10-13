@@ -2,7 +2,6 @@ import copy
 import io
 import os
 import plistlib
-import typing
 import uuid
 from functools import partial
 from pprint import pprint
@@ -373,7 +372,7 @@ class RemoteServer(LockdownService):
 
     def shell(self):
         IPython.embed(
-            header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.TerminalTrueColorFormatter(style='native')),
+            header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.Terminal256Formatter(style='native')),
             user_ns={
                 'developer': self,
                 'broadcast': self.broadcast,
@@ -507,7 +506,7 @@ class RemoteServer(LockdownService):
 
 
 class Tap:
-    def __init__(self, dvt, channel_name: str, config: typing.Mapping):
+    def __init__(self, dvt, channel_name: str, config: dict):
         self._dvt = dvt
         self._channel_name = channel_name
         self._config = config

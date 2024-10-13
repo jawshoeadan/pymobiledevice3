@@ -264,10 +264,10 @@ There is A LOT you may do on the device using `pymobiledevice3`. This is just a 
 # Listing connected devices
 pymobiledevice3 usbmux list
 
-# Discover network devices using bonjour
-pymobiledevice3 bonjour browse
+# Browse RemoteXPC devices using bonjour
+pymobiledevice3 bonjour rsd
 
-# View all syslog lines (including debug messages
+# View all syslog lines (including debug messages)
 pymobiledevice3 syslog live
 
 # Filter out only messages containing the word "SpringBoard"
@@ -387,6 +387,8 @@ See [CONTRIBUTING](https://github.com/doronz88/pymobiledevice3/blob/master/CONTR
 ## Useful info
 
 Please see [misc](https://github.com/doronz88/pymobiledevice3/blob/master/misc)
+
+Library uses WindowsSelectorEventLoopPolicy for asyncio on Windows platform. Please see discussion [misc](https://github.com/doronz88/pymobiledevice3/issues/1217)
 
 ## Copyright notice
 

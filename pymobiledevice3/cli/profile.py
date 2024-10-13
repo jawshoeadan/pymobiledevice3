@@ -2,10 +2,9 @@ import logging
 import plistlib
 import tempfile
 from pathlib import Path
-from typing import IO, List
+from typing import IO, Optional
 
 import click
-from typing_extensions import Optional
 
 from pymobiledevice3.ca import create_keybag_file
 from pymobiledevice3.cli.cli_common import Command, print_json
@@ -37,7 +36,7 @@ def profile_list(service_provider: LockdownClient):
 @profile_group.command('install', cls=Command)
 @click.option('--keybag', type=click.Path(file_okay=True, dir_okay=False, exists=True))
 @click.argument('profiles', nargs=-1, type=click.File('rb'))
-def profile_install(service_provider: LockdownServiceProvider, keybag: Optional[str], profiles: List[IO]) -> None:
+def profile_install(service_provider: LockdownServiceProvider, keybag: Optional[str], profiles: list[IO]) -> None:
     """
     Install given profiles
 
@@ -67,7 +66,7 @@ def profile_cloud_configuration(service_provider: LockdownServiceProvider, confi
 
 @profile_group.command('store', cls=Command)
 @click.argument('profiles', nargs=-1, type=click.File('rb'))
-def profile_store(service_provider: LockdownServiceProvider, profiles: List[IO]) -> None:
+def profile_store(service_provider: LockdownServiceProvider, profiles: list[IO]) -> None:
     """ Store a profile """
     service = MobileConfigService(lockdown=service_provider)
     for profile in profiles:
@@ -145,6 +144,8 @@ def profile_install_wifi_profile(service_provider: LockdownServiceProvider, encr
 
     This will enable the device to auto-connect to given network
     """
+    if keybag is not None:
+        keybag = Path(keybag)
     MobileConfigService(lockdown=service_provider).install_wifi_profile(
         encryption_type=encryption_type, ssid=ssid, password=password, keybag_file=keybag)
 
@@ -156,6 +157,8 @@ def profile_install_wifi_profile(service_provider: LockdownServiceProvider, encr
 def profile_install_http_proxy(service_provider: LockdownServiceProvider, server: str, port: int,
                                keybag: Optional[str]) -> None:
     """ Install HTTP Proxy profile """
+    if keybag is not None:
+        keybag = Path(keybag)
     MobileConfigService(lockdown=service_provider).install_http_proxy(server, port, keybag_file=keybag)
 
 
@@ -163,3 +166,15 @@ def profile_install_http_proxy(service_provider: LockdownServiceProvider, server
 def profile_remove_http_proxy(service_provider: LockdownServiceProvider) -> None:
     """ Remove HTTP Proxy profile that was previously installed using pymobiledevice3 """
     MobileConfigService(lockdown=service_provider).remove_http_proxy()
+
+
+@profile_group.command('install-restrictions-profile', cls=Command)
+@click.option('--keybag', type=click.Path(file_okay=True, dir_okay=False, exists=True))
+@click.option('--enforced-software-update-delay', type=click.IntRange(0, 90), default=0)
+def profile_install_restrictions_profile(
+        service_provider: LockdownServiceProvider, keybag: Optional[str], enforced_software_update_delay: int) -> None:
+    """ Install restrictions profile (can be used for delayed OTA) """
+    if keybag is not None:
+        keybag = Path(keybag)
+    MobileConfigService(lockdown=service_provider).install_restrictions_profile(
+        enforced_software_update_delay=enforced_software_update_delay, keybag_file=keybag)

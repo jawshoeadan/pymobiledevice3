@@ -1,7 +1,7 @@
 import plistlib
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from cryptography import x509
@@ -16,6 +16,7 @@ from pymobiledevice3.services.lockdown_service import LockdownService
 
 ERROR_CLOUD_CONFIGURATION_ALREADY_PRESENT = 14002
 GLOBAL_HTTP_PROXY_UUID = '86a52338-52f7-4c09-b005-52baf3dc4882'
+GLOBAL_RESTRICTIONS_UUID = 'e22a0a66-08a8-43f5-9bbc-5279af35bb2b'
 
 
 class Purpose(Enum):
@@ -59,16 +60,16 @@ class MobileConfigService(LockdownService):
         self._send_recv({'RequestType': 'EscalateResponse', 'SignedRequest': signed_challenge})
         self._send_recv({'RequestType': 'ProceedWithKeybagMigration'})
 
-    def get_stored_profile(self, purpose: Purpose = Purpose.PostSetupInstallation) -> Mapping:
+    def get_stored_profile(self, purpose: Purpose = Purpose.PostSetupInstallation) -> dict:
         return self._send_recv({'RequestType': 'GetStoredProfile', 'Purpose': purpose.value})
 
     def store_profile(self, profile_data: bytes, purpose: Purpose = Purpose.PostSetupInstallation) -> None:
         self._send_recv({'RequestType': 'StoreProfile', 'ProfileData': profile_data, 'Purpose': purpose.value})
 
-    def get_cloud_configuration(self) -> Mapping:
+    def get_cloud_configuration(self) -> dict:
         return self._send_recv({'RequestType': 'GetCloudConfiguration'}).get('CloudConfiguration')
 
-    def set_cloud_configuration(self, cloud_configuration: Mapping) -> None:
+    def set_cloud_configuration(self, cloud_configuration: dict) -> None:
         self._send_recv({'RequestType': 'SetCloudConfiguration', 'CloudConfiguration': cloud_configuration})
 
     def establish_provisional_enrollment(self, nonce: bytes) -> None:
@@ -84,7 +85,7 @@ class MobileConfigService(LockdownService):
         except ConnectionAbortedError:
             pass
 
-    def get_profile_list(self) -> Mapping:
+    def get_profile_list(self) -> dict:
         return self._send_recv({'RequestType': 'GetProfileList'})
 
     def install_profile(self, payload: bytes) -> None:
@@ -109,7 +110,7 @@ class MobileConfigService(LockdownService):
                                })
         self._send_recv({'RequestType': 'RemoveProfile', 'ProfileIdentifier': data})
 
-    def _send_recv(self, request: Mapping) -> Mapping:
+    def _send_recv(self, request: dict) -> dict:
         response = self.service.send_recv_plist(request)
         if response.get('Status', None) != 'Acknowledged':
             error_chain = response.get('ErrorChain')
@@ -217,16 +218,48 @@ class MobileConfigService(LockdownService):
                 'Welcome',
                 'Appearance',
                 'RestoreCompleted',
-                'UpdateCompleted'
+                'UpdateCompleted',
+                'WiFi',
+                'Display',
+                'Tone',
+                'LanguageAndLocale',
+                'TouchID',
+                'TrueToneDisplay',
+                'FileVault',
+                'iCloudStorage',
+                'iCloudDiagnostics',
+                'Registration',
+                'DeviceToDeviceMigration',
+                'UnlockWithWatch',
+                'Accessibility',
+                'All',
+                'ExpressLanguage',
+                'Language',
+                'N/A',
+                'Region',
+                'Avatar',
+                'DeviceProtection',
+                'Key',
+                'LockdownMode',
+                'Wallpaper',
+                'PrivacySubtitle',
+                'SecuritySubtitle',
+                'DataSubtitle',
+                'AppleIDSubtitle',
+                'AppearanceSubtitle',
+                'PreferredLang',
+                'OnboardingSubtitle',
+                'AppleTVSubtitle',
+                'Intelligence'
             ],
             'SupervisorHostCertificates': [
                 public_key
             ]
         })
 
-    def install_managed_profile(self, display_name: str, payload_content: Mapping[str, Any],
-                                payload_uuid: str = str(uuid4()),
-                                keybag_file: Optional[Path] = None) -> None:
+    def install_managed_profile(
+            self, display_name: str, payload_content: dict[str, Any], payload_uuid: str = str(uuid4()),
+            keybag_file: Optional[Path] = None) -> None:
         profile_data = plistlib.dumps({
             'PayloadContent': [
                 payload_content
@@ -242,3 +275,124 @@ class MobileConfigService(LockdownService):
             self.install_profile_silent(keybag_file, profile_data)
         else:
             self.install_profile(profile_data)
+
+    def install_restrictions_profile(
+            self, enforced_software_update_delay: int = 0, payload_uuid: str = GLOBAL_RESTRICTIONS_UUID,
+            keybag_file: Optional[Path] = None) -> None:
+        self.install_managed_profile('Restrictions', {
+            'PayloadDescription': 'Configures restrictions',
+            'PayloadDisplayName': 'Restrictions',
+            'PayloadIdentifier': f'com.apple.applicationaccess.{payload_uuid}',
+            'PayloadType': 'com.apple.applicationaccess',
+            'PayloadUUID': payload_uuid,
+            'PayloadVersion': 1,
+            'allowActivityContinuation': True,
+            'allowAddingGameCenterFriends': True,
+            'allowAirPlayIncomingRequests': True,
+            'allowAirPrint': True,
+            'allowAirPrintCredentialsStorage': True,
+            'allowAirPrintiBeaconDiscovery': True,
+            'allowAppCellularDataModification': True,
+            'allowAppClips': True,
+            'allowAppInstallation': True,
+            'allowAppRemoval': True,
+            'allowApplePersonalizedAdvertising': True,
+            'allowAssistant': True,
+            'allowAssistantWhileLocked': True,
+            'allowAutoCorrection': True,
+            'allowAutoUnlock': True,
+            'allowAutomaticAppDownloads': True,
+            'allowBluetoothModification': True,
+            'allowBookstore': True,
+            'allowBookstoreErotica': True,
+            'allowCamera': True,
+            'allowCellularPlanModification': True,
+            'allowChat': True,
+            'allowCloudBackup': True,
+            'allowCloudDocumentSync': True,
+            'allowCloudPhotoLibrary': True,
+            'allowContinuousPathKeyboard': True,
+            'allowDefinitionLookup': True,
+            'allowDeviceNameModification': True,
+            'allowDeviceSleep': True,
+            'allowDictation': True,
+            'allowESIMModification': True,
+            'allowEnablingRestrictions': True,
+            'allowEnterpriseAppTrust': True,
+            'allowEnterpriseBookBackup': True,
+            'allowEnterpriseBookMetadataSync': True,
+            'allowEraseContentAndSettings': True,
+            'allowExplicitContent': True,
+            'allowFilesNetworkDriveAccess': True,
+            'allowFilesUSBDriveAccess': True,
+            'allowFindMyDevice': True,
+            'allowFindMyFriends': True,
+            'allowFingerprintForUnlock': True,
+            'allowFingerprintModification': True,
+            'allowGameCenter': True,
+            'allowGlobalBackgroundFetchWhenRoaming': True,
+            'allowInAppPurchases': True,
+            'allowKeyboardShortcuts': True,
+            'allowManagedAppsCloudSync': True,
+            'allowMultiplayerGaming': True,
+            'allowMusicService': True,
+            'allowNews': True,
+            'allowNotificationsModification': True,
+            'allowOpenFromManagedToUnmanaged': True,
+            'allowOpenFromUnmanagedToManaged': True,
+            'allowPairedWatch': True,
+            'allowPassbookWhileLocked': True,
+            'allowPasscodeModification': True,
+            'allowPasswordAutoFill': True,
+            'allowPasswordProximityRequests': True,
+            'allowPasswordSharing': True,
+            'allowPersonalHotspotModification': True,
+            'allowPhotoStream': True,
+            'allowPredictiveKeyboard': True,
+            'allowProximitySetupToNewDevice': True,
+            'allowRadioService': True,
+            'allowRemoteAppPairing': True,
+            'allowRemoteScreenObservation': True,
+            'allowSafari': True,
+            'allowScreenShot': True,
+            'allowSharedStream': True,
+            'allowSpellCheck': True,
+            'allowSpotlightInternetResults': True,
+            'allowSystemAppRemoval': True,
+            'allowUIAppInstallation': True,
+            'allowUIConfigurationProfileInstallation': True,
+            'allowUSBRestrictedMode': True,
+            'allowUnpairedExternalBootToRecovery': False,
+            'allowUntrustedTLSPrompt': True,
+            'allowVPNCreation': True,
+            'allowVideoConferencing': True,
+            'allowVoiceDialing': True,
+            'allowWallpaperModification': True,
+            'allowiTunes': True,
+            'enforcedSoftwareUpdateDelay': enforced_software_update_delay,
+            'forceAirDropUnmanaged': False,
+            'forceAirPrintTrustedTLSRequirement': False,
+            'forceAssistantProfanityFilter': False,
+            'forceAuthenticationBeforeAutoFill': False,
+            'forceAutomaticDateAndTime': False,
+            'forceClassroomAutomaticallyJoinClasses': False,
+            'forceClassroomRequestPermissionToLeaveClasses': False,
+            'forceClassroomUnpromptedAppAndDeviceLock': False,
+            'forceClassroomUnpromptedScreenObservation': False,
+            'forceDelayedSoftwareUpdates': True,
+            'forceEncryptedBackup': False,
+            'forceITunesStorePasswordEntry': False,
+            'forceLimitAdTracking': False,
+            'forceWatchWristDetection': False,
+            'forceWiFiPowerOn': False,
+            'forceWiFiWhitelisting': False,
+            'ratingApps': 1000,
+            'ratingMovies': 1000,
+            'ratingRegion': 'us',
+            'ratingTVShows': 1000,
+            'safariAcceptCookies': 2.0,
+            'safariAllowAutoFill': True,
+            'safariAllowJavaScript': True,
+            'safariAllowPopups': True,
+            'safariForceFraudWarning': False
+        }, payload_uuid=payload_uuid, keybag_file=keybag_file)

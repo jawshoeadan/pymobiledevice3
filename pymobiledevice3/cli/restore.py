@@ -5,8 +5,9 @@ import os
 import plistlib
 import tempfile
 import traceback
+from collections.abc import Generator
 from pathlib import Path
-from typing import IO, Generator, Optional, Union
+from typing import IO, Optional, Union
 from zipfile import ZipFile
 
 import click
@@ -153,7 +154,7 @@ def restore() -> None:
 def restore_shell(device):
     """ create an IPython shell for interacting with iBoot """
     IPython.embed(
-        header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.TerminalTrueColorFormatter(style='native')),
+        header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.Terminal256Formatter(style='native')),
         user_ns={
             'irecv': device,
         })

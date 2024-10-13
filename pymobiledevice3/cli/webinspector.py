@@ -2,9 +2,10 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from functools import update_wrapper
-from typing import Iterable, List, Optional, Type
+from typing import Optional
 
 import click
 import inquirer3
@@ -197,7 +198,7 @@ def shell(service_provider: LockdownClient, timeout):
     driver = WebDriver(session)
     try:
         IPython.embed(
-            header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.TerminalTrueColorFormatter(style='native')),
+            header=highlight(SHELL_USAGE, lexers.PythonLexer(), formatters.Terminal256Formatter(style='native')),
             user_ns={
                 'driver': driver,
                 'Cookie': Cookie,
@@ -257,7 +258,7 @@ def cdp(service_provider: LockdownClient, host, port):
                 ws_ping_timeout=None, ws='wsproto', loop='asyncio')
 
 
-def get_js_completions(jsshell: 'JsShell', obj: str, prefix: str) -> List[Completion]:
+def get_js_completions(jsshell: 'JsShell', obj: str, prefix: str) -> list[Completion]:
     if obj in JS_RESERVED_WORDS:
         return []
 
@@ -326,7 +327,7 @@ class JsShell(ABC):
 
         result = await self.evaluate_expression(exp)
         colorful_result = highlight(f'{result}', lexers.JavascriptLexer(),
-                                    formatters.TerminalTrueColorFormatter(style='stata-dark'))
+                                    formatters.Terminal256Formatter(style='stata-dark'))
         print(colorful_result, end='')
 
     async def start(self, url: str = ''):
@@ -415,7 +416,7 @@ class InspectorJsShell(JsShell):
         return page
 
 
-async def run_js_shell(js_shell_class: Type[JsShell], lockdown: LockdownClient,
+async def run_js_shell(js_shell_class: type[JsShell], lockdown: LockdownClient,
                        timeout: float, url: str):
     async with js_shell_class.create(lockdown, timeout, SAFARI) as js_shell_instance:
         await js_shell_instance.start(url)
