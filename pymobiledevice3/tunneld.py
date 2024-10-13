@@ -414,6 +414,8 @@ class TunneldRunner:
         @self._app.get('/clear_tunnels')
         async def clear_tunnels() -> fastapi.Response:
             self._tunneld_core.clear()
+            for heartbeat_process in self._heartbeat_processes.values():
+                heartbeat_process.terminate()
             return fastapi.Response(status_code=200, content='Cleared tunnels...')
 
         @self._app.get('/cancel')
