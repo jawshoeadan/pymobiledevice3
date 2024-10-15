@@ -38,7 +38,6 @@ from pymobiledevice3.remote.utils import get_rsds, stop_remoted
 from pymobiledevice3.utils import asyncio_print_traceback, get_asyncio_loop
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 TUNNELD_DEFAULT_ADDRESS = ('127.0.0.1', 49151)
 
