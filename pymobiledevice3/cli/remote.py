@@ -20,7 +20,8 @@ from pymobiledevice3.remote.remote_service_discovery import RSD_PORT, RemoteServ
 from pymobiledevice3.remote.tunnel_service import RemotePairingManualPairingService, get_core_device_tunnel_services, \
     get_remote_pairing_tunnel_services
 from pymobiledevice3.remote.utils import get_rsds
-from pymobiledevice3.tunneld import TUNNELD_DEFAULT_ADDRESS, TunneldRunner
+from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS
+from pymobiledevice3.tunneld.server import TunneldRunner
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,8 @@ def remote_cli() -> None:
 @click.option('--port', type=click.INT, default=TUNNELD_DEFAULT_ADDRESS[1])
 @click.option('-d', '--daemonize', is_flag=True)
 @click.option('-p', '--protocol', type=click.Choice([e.value for e in TunnelProtocol]),
-              default=TunnelProtocol.QUIC.value)
+              help='Transport protocol. If python version >= 3.13 will default to TCP. Otherwise will default to QUIC',
+              default=TunnelProtocol.DEFAULT.value)
 @click.option('--usb/--no-usb', default=True, help='Enable usb monitoring')
 @click.option('--wifi/--no-wifi', default=True, help='Enable wifi monitoring')
 @click.option('--usbmux/--no-usbmux', default=True, help='Enable usbmux monitoring')
@@ -112,7 +114,7 @@ def rsd_info(service_provider: RemoteServiceDiscoveryService):
 
 async def tunnel_task(
         service, secrets: Optional[TextIO] = None, script_mode: bool = False,
-        max_idle_timeout: float = MAX_IDLE_TIMEOUT, protocol: TunnelProtocol = TunnelProtocol.QUIC) -> None:
+        max_idle_timeout: float = MAX_IDLE_TIMEOUT, protocol: TunnelProtocol = TunnelProtocol.DEFAULT) -> None:
     async with start_tunnel(
             service, secrets=secrets, max_idle_timeout=max_idle_timeout, protocol=protocol) as tunnel_result:
         logger.info('tunnel created')
@@ -152,7 +154,7 @@ async def tunnel_task(
 
 async def start_tunnel_task(
         connection_type: ConnectionType, secrets: TextIO, udid: Optional[str] = None, script_mode: bool = False,
-        max_idle_timeout: float = MAX_IDLE_TIMEOUT, protocol: TunnelProtocol = TunnelProtocol.QUIC) -> None:
+        max_idle_timeout: float = MAX_IDLE_TIMEOUT, protocol: TunnelProtocol = TunnelProtocol.DEFAULT) -> None:
     if start_tunnel is None:
         raise NotImplementedError('failed to start the tunnel on your platform')
     get_tunnel_services = {
@@ -185,7 +187,7 @@ async def start_tunnel_task(
               help='Maximum QUIC idle time (ping interval)')
 @click.option('-p', '--protocol',
               type=click.Choice([e.value for e in TunnelProtocol], case_sensitive=False),
-              default=TunnelProtocol.QUIC.value)
+              default=TunnelProtocol.DEFAULT.value)
 @sudo_required
 def cli_start_tunnel(
         connection_type: ConnectionType, udid: Optional[str], secrets: TextIO, script_mode: bool,

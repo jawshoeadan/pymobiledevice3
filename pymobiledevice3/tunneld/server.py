@@ -13,8 +13,6 @@ from typing import Optional, Union
 
 import construct
 import fastapi
-import requests
-from pymobiledevice3.services.heartbeat import HeartbeatService
 import uvicorn
 from construct import StreamError
 from fastapi import FastAPI
@@ -26,8 +24,8 @@ from pymobiledevice3.bonjour import REMOTED_SERVICE_NAMES, browse
 from pymobiledevice3.lockdown import create_using_tcp, create_using_usbmux, get_mobdev2_lockdowns
 
 from pymobiledevice3.exceptions import ConnectionFailedError, ConnectionFailedToUsbmuxdError, DeviceNotFoundError, \
-    GetProhibitedError, InvalidServiceError, MuxException, PairingError, TunneldConnectionError
-
+    GetProhibitedError, InvalidServiceError, LockdownError, MuxException, PairingError
+from pymobiledevice3.lockdown import create_using_usbmux, get_mobdev2_lockdowns
 from pymobiledevice3.osu.os_utils import get_os_utils
 from pymobiledevice3.remote.common import TunnelProtocol
 from pymobiledevice3.remote.module_imports import start_tunnel
@@ -35,11 +33,9 @@ from pymobiledevice3.remote.remote_service_discovery import RSD_PORT, RemoteServ
 from pymobiledevice3.remote.tunnel_service import CoreDeviceTunnelProxy, RemotePairingProtocol, TunnelResult, \
     create_core_device_tunnel_service_using_rsd, get_remote_pairing_tunnel_services
 from pymobiledevice3.remote.utils import get_rsds, stop_remoted
-from pymobiledevice3.utils import asyncio_print_traceback, get_asyncio_loop
+from pymobiledevice3.utils import asyncio_print_traceback
 
 logger = logging.getLogger(__name__)
-
-TUNNELD_DEFAULT_ADDRESS = ('127.0.0.1', 49151)
 
 # bugfix: after the device reboots, it might take some time for remoted to start answering the bonjour queries
 REATTEMPT_INTERVAL = 5
@@ -60,7 +56,7 @@ class TunnelTask:
 
 
 class TunneldCore:
-    def __init__(self, protocol: TunnelProtocol = TunnelProtocol.QUIC, wifi_monitor: bool = True,
+    def __init__(self, protocol: TunnelProtocol = TunnelProtocol.DEFAULT, wifi_monitor: bool = True,
                  usb_monitor: bool = True, usbmux_monitor: bool = True, mobdev2_monitor: bool = True) -> None:
         self.protocol = protocol
         self.tasks: list[asyncio.Task] = []
@@ -148,7 +144,7 @@ class TunneldCore:
                         try:
                             service = CoreDeviceTunnelProxy(create_using_usbmux(mux_device.serial))
                         except (MuxException, InvalidServiceError, GetProhibitedError, construct.core.StreamError,
-                                ConnectionAbortedError, DeviceNotFoundError):
+                                ConnectionAbortedError, DeviceNotFoundError, LockdownError):
                             continue
                         self.tunnel_tasks[task_identifier] = TunnelTask(
                             udid=mux_device.serial,
@@ -224,10 +220,12 @@ class TunneldCore:
             logger.error(f"StreamError occurred at: {traceback.format_exc()}")
         except asyncio.CancelledError:
             pass
-        except (ConnectionResetError, StreamError) as e:
-            logger.debug(f'got {e.__class__.__name__} from {asyncio.current_task().get_name()}')
-        except (asyncio.exceptions.IncompleteReadError, TimeoutError, OSError) as e:
-            logger.debug(f'got {e.__class__.__name__} from tunnel --rsd {tun.address} {tun.port}')
+        except (asyncio.exceptions.IncompleteReadError, TimeoutError, OSError, ConnectionResetError, StreamError,
+                InvalidServiceError) as e:
+            if tun is None:
+                logger.debug(f'got {e.__class__.__name__} from {asyncio.current_task().get_name()}')
+            else:
+                logger.debug(f'got {e.__class__.__name__} from tunnel --rsd {tun.address} {tun.port}')
         except Exception:
             logger.error(f'got exception from {asyncio.current_task().get_name()}: {traceback.format_exc()}')
         finally:
@@ -580,52 +578,3 @@ class TunneldRunner:
 
     def _run_app(self) -> None:
         uvicorn.run(self._app, host=self.host, port=self.port, loop='asyncio')
-
-
-async def async_get_tunneld_devices(tunneld_address: tuple[str, int] = TUNNELD_DEFAULT_ADDRESS) \
-        -> list[RemoteServiceDiscoveryService]:
-    tunnels = _list_tunnels(tunneld_address)
-    return await _create_rsds_from_tunnels(tunnels)
-
-
-def get_tunneld_devices(tunneld_address: tuple[str, int] = TUNNELD_DEFAULT_ADDRESS) \
-        -> list[RemoteServiceDiscoveryService]:
-    return get_asyncio_loop().run_until_complete(async_get_tunneld_devices(tunneld_address))
-
-
-async def async_get_tunneld_device_by_udid(udid: str, tunneld_address: tuple[str, int] = TUNNELD_DEFAULT_ADDRESS) \
-        -> Optional[RemoteServiceDiscoveryService]:
-    tunnels = _list_tunnels(tunneld_address)
-    if udid not in tunnels:
-        return None
-    rsds = await _create_rsds_from_tunnels({udid: tunnels[udid]})
-    return rsds[0]
-
-
-def get_tunneld_device_by_udid(udid: str, tunneld_address: tuple[str, int] = TUNNELD_DEFAULT_ADDRESS) \
-        -> Optional[RemoteServiceDiscoveryService]:
-    return get_asyncio_loop().run_until_complete(async_get_tunneld_device_by_udid(udid, tunneld_address))
-
-
-def _list_tunnels(tunneld_address: tuple[str, int] = TUNNELD_DEFAULT_ADDRESS) -> dict[str, list[dict]]:
-    try:
-        # Get the list of tunnels from the specified address
-        resp = requests.get(f'http://{tunneld_address[0]}:{tunneld_address[1]}')
-        tunnels = resp.json()
-    except requests.exceptions.ConnectionError:
-        raise TunneldConnectionError()
-    return tunnels
-
-
-async def _create_rsds_from_tunnels(tunnels: dict[str, list[dict]]) -> list[RemoteServiceDiscoveryService]:
-    rsds = []
-    for udid, details in tunnels.items():
-        for tunnel_details in details:
-            rsd = RemoteServiceDiscoveryService((tunnel_details['tunnel-address'], tunnel_details['tunnel-port']),
-                                                name=tunnel_details['interface'])
-            try:
-                await rsd.connect()
-                rsds.append(rsd)
-            except (TimeoutError, ConnectionError):
-                continue
-    return rsds

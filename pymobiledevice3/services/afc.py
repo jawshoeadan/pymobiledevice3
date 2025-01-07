@@ -9,6 +9,7 @@ import shutil
 import stat as stat_module
 import struct
 import sys
+import warnings
 from collections import namedtuple
 from datetime import datetime
 from re import Pattern
@@ -21,7 +22,7 @@ from parameter_decorators import path_to_str
 from pygments import formatters, highlight, lexers
 from pygnuutils.cli.ls import ls as ls_cli
 from pygnuutils.ls import Ls, LsStub
-from tqdm import trange
+from tqdm.auto import trange
 from xonsh.built_ins import XSH
 from xonsh.cli_utils import Annotated, Arg, ArgParserAlias
 from xonsh.main import main as xonsh_main
@@ -224,7 +225,7 @@ class AfcService(LockdownService):
         self.packet_num = 0
 
     def pull(self, relative_src: str, dst: str, match: Optional[Pattern] = None, callback: Optional[Callable] = None,
-             src_dir: str = '') -> None:
+             src_dir: str = '', ignore_errors: bool = False, progress_bar: bool = True) -> None:
         src = self.resolve_path(posixpath.join(src_dir, relative_src))
 
         if not self.isdir(src):
@@ -238,7 +239,11 @@ class AfcService(LockdownService):
                 else:
                     left_size = src_size
                     handle = self.fopen(src)
-                    for _ in trange(src_size // MAXIMUM_READ_SIZE + 1):
+                    if progress_bar:
+                        pb = trange(src_size // MAXIMUM_READ_SIZE + 1)
+                    else:
+                        pb = range(src_size // MAXIMUM_READ_SIZE + 1)
+                    for _ in pb:
                         f.write(self.fread(handle, min(MAXIMUM_READ_SIZE, left_size)))
                         left_size -= MAXIMUM_READ_SIZE
                     self.fclose(handle)
@@ -259,12 +264,20 @@ class AfcService(LockdownService):
                 if match is not None and not match.match(posixpath.basename(src_filename)):
                     continue
 
-                if self.isdir(src_filename):
-                    dst_filename.mkdir(exist_ok=True)
-                    self.pull(src_filename, str(dst_path), callback=callback)
-                    continue
+                try:
+                    if self.isdir(src_filename):
+                        dst_filename.mkdir(exist_ok=True)
+                        self.pull(src_filename, str(dst_path), callback=callback, ignore_errors=ignore_errors,
+                                  progress_bar=progress_bar)
+                        continue
 
-                self.pull(src_filename, str(dst_path), callback=callback)
+                    self.pull(src_filename, str(dst_path), callback=callback, ignore_errors=ignore_errors,
+                              progress_bar=progress_bar)
+
+                except Exception as afc_exception:
+                    if not ignore_errors:
+                        raise
+                    self.logger.warning("(Ignoring) Error:", afc_exception, "occured during the copy of", src_filename)
 
     @path_to_str()
     def exists(self, filename):
@@ -726,6 +739,7 @@ class AfcShell:
     @classmethod
     def create(cls, service_provider: LockdownServiceProvider, service_name: Optional[str] = None,
                service: Optional[LockdownService] = None, auto_cd: Optional[str] = '/'):
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
         args = ['--rc', str(pathlib.Path(__file__).absolute())]
         os.environ['XONSH_COLOR_STYLE'] = 'default'
         XSH.ctx['_class'] = cls
@@ -776,7 +790,7 @@ class AfcShell:
         # clear all host commands except for some useful ones
         XSH.env['PATH'].clear()
         # adding "file" just to fix xonsh errors
-        for cmd in ['wc', 'grep', 'egrep', 'sed', 'awk', 'print', 'yes', 'cat', 'file']:
+        for cmd in ['wc', 'grep', 'egrep', 'sed', 'awk', 'print', 'yes', 'cat']:
             executable = shutil.which(cmd)
             if executable is not None:
                 self._register_rpc_command(cmd, executable)
@@ -861,11 +875,13 @@ class AfcShell:
         for filename in file:
             self.afc.rm(self.relative_path(filename))
 
-    def _do_pull(self, remote_path: Annotated[str, Arg(completer=path_completer)], local_path: str):
+    def _do_pull(self, remote_path: Annotated[str, Arg(completer=path_completer)], local_path: str,
+                 ignore_errors: bool = False, progress_bar: bool = True):
         def log(src, dst):
             print(f'{src} --> {dst}')
 
-        self.afc.pull(remote_path, local_path, callback=log, src_dir=self.cwd)
+        self.afc.pull(remote_path, local_path, callback=log, src_dir=self.cwd, ignore_errors=ignore_errors,
+                      progress_bar=progress_bar)
 
     def _do_push(self, local_path: str, remote_path: Annotated[str, Arg(completer=path_completer)]):
         def log(src, dst):

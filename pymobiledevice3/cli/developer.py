@@ -7,6 +7,7 @@ import posixpath
 import shlex
 import signal
 import sys
+import time
 from collections import namedtuple
 from dataclasses import asdict
 from datetime import datetime
@@ -21,16 +22,18 @@ from pykdebugparser.pykdebugparser import PyKdebugParser
 import pymobiledevice3
 from pymobiledevice3.cli.cli_common import BASED_INT, Command, RSDCommand, default_json_encoder, print_json, \
     user_requested_colored_output
-from pymobiledevice3.exceptions import DeviceAlreadyInUseError, DvtDirListError, ExtractingStackshotError, \
-    RSDRequiredError, UnrecognizedSelectorError
-from pymobiledevice3.lockdown import LockdownClient
+from pymobiledevice3.exceptions import CoreDeviceError, DeviceAlreadyInUseError, DvtDirListError, \
+    ExtractingStackshotError, RSDRequiredError, UnrecognizedSelectorError
+from pymobiledevice3.lockdown import LockdownClient, create_using_usbmux
 from pymobiledevice3.lockdown_service_provider import LockdownServiceProvider
 from pymobiledevice3.osu.os_utils import get_os_utils
 from pymobiledevice3.remote.core_device.app_service import AppServiceService
 from pymobiledevice3.remote.core_device.device_info import DeviceInfoService
+from pymobiledevice3.remote.core_device.diagnostics_service import DiagnosticsServiceService
 from pymobiledevice3.remote.core_device.file_service import APPLE_DOMAIN_DICT, FileServiceService
 from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
 from pymobiledevice3.services.accessibilityaudit import AccessibilityAudit
+from pymobiledevice3.services.crash_reports import CrashReportsManager
 from pymobiledevice3.services.debugserver_applist import DebugServerAppList
 from pymobiledevice3.services.device_arbitration import DtDeviceArbitration
 from pymobiledevice3.services.dtfetchsymbols import DtFetchSymbols
@@ -123,6 +126,12 @@ def proclist(service_provider: LockdownClient):
 
         print_json(processes)
 
+@dvt.command('memlimitoff', cls=Command)
+@click.argument('pid', type=click.INT)
+def memlimitoff(service_provider: LockdownServiceProvider, pid: int) -> None:
+    """ Disable process memory limit """
+    with DvtSecureSocketProxyService(lockdown=service_provider) as dvt:
+        ProcessControl(dvt).disable_memory_limit_for_pid(pid)
 
 @dvt.command('applist', cls=Command)
 def applist(service_provider: LockdownServiceProvider) -> None:
@@ -840,6 +849,15 @@ def accessibility_settings_set(service_provider: LockdownClient, setting, value)
     OSUTILS.wait_return()
 
 
+@accessibility_settings.command('reset', cls=Command)
+def accessibility_settings_reset(service_provider: LockdownClient):
+    """
+    reset accessibility settings to default
+    """
+    service = AccessibilityAudit(service_provider)
+    service.reset_settings()
+
+
 @accessibility.command('shell', cls=Command)
 def accessibility_shell(service_provider: LockdownClient):
     """ start and ipython accessibility shell """
@@ -860,32 +878,13 @@ def accessibility_notifications(service_provider: LockdownClient):
 
 @accessibility.command('list-items', cls=Command)
 def accessibility_list_items(service_provider: LockdownClient):
-    """ list items available in currently shown menu """
+    """List elements available in the currently shown menu."""
 
-    service = AccessibilityAudit(service_provider)
-    iterator = service.iter_events()
-
-    # every focus change is expected publish a "hostInspectorCurrentElementChanged:"
-    service.move_focus_next()
-
-    first_item = None
-
-    for event in iterator:
-        if event.name != 'hostInspectorCurrentElementChanged:':
-            # ignore any other events
-            continue
-
-        # each such event should contain exactly one element that became in focus
-        current_item = event.data[0]
-
-        if first_item is None:
-            first_item = current_item
-        else:
-            if first_item.caption == current_item.caption:
-                return
-
-        print(f'{current_item.caption}: {current_item.element.identifier}')
-        service.move_focus_next()
+    elements = []
+    with AccessibilityAudit(service_provider) as service:
+        for element in service.iter_elements():
+            elements.append(element.to_dict())
+    print_json(elements)
 
 
 @developer.group('condition')
@@ -1061,23 +1060,24 @@ def core_device() -> None:
 
 
 async def core_device_list_directory_task(
-        service_provider: RemoteServiceDiscoveryService, domain: str, path: str) -> None:
-    async with FileServiceService(service_provider, APPLE_DOMAIN_DICT[domain]) as file_service:
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str) -> None:
+    async with FileServiceService(service_provider, APPLE_DOMAIN_DICT[domain], identifier) as file_service:
         print_json(await file_service.retrieve_directory_list(path))
 
 
 @core_device.command('list-directory', cls=RSDCommand)
 @click.argument('domain', type=click.Choice(APPLE_DOMAIN_DICT.keys()))
 @click.argument('path')
+@click.option('--identifier', default='')
 def core_device_list_directory(
-        service_provider: RemoteServiceDiscoveryService, domain: str, path: str) -> None:
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str) -> None:
     """ List directory at given domain-path """
-    asyncio.run(core_device_list_directory_task(service_provider, domain, path))
+    asyncio.run(core_device_list_directory_task(service_provider, domain, path, identifier))
 
 
 async def core_device_read_file_task(
-        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, output: Optional[IO]) -> None:
-    async with FileServiceService(service_provider, APPLE_DOMAIN_DICT[domain]) as file_service:
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str, output: Optional[IO]) -> None:
+    async with FileServiceService(service_provider, APPLE_DOMAIN_DICT[domain], identifier) as file_service:
         buf = await file_service.retrieve_file(path)
         if output is not None:
             output.write(buf)
@@ -1088,11 +1088,36 @@ async def core_device_read_file_task(
 @core_device.command('read-file', cls=RSDCommand)
 @click.argument('domain', type=click.Choice(APPLE_DOMAIN_DICT.keys()))
 @click.argument('path')
+@click.option('--identifier', default='')
 @click.option('-o', '--output', type=click.File('wb'))
 def core_device_read_file(
-        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, output: Optional[IO]) -> None:
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str, output: Optional[IO]) -> None:
     """ Read file from given domain-path """
-    asyncio.run(core_device_read_file_task(service_provider, domain, path, output))
+    asyncio.run(core_device_read_file_task(service_provider, domain, path, identifier, output))
+
+
+async def core_device_propose_empty_file_task(
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str, file_permissions: int,
+        uid: int, gid: int, creation_time: int, last_modification_time: int) -> None:
+    async with FileServiceService(service_provider, APPLE_DOMAIN_DICT[domain], identifier) as file_service:
+        await file_service.propose_empty_file(path, file_permissions, uid, gid, creation_time, last_modification_time)
+
+
+@core_device.command('propose-empty-file', cls=RSDCommand)
+@click.argument('domain', type=click.Choice(APPLE_DOMAIN_DICT.keys()))
+@click.argument('path')
+@click.option('--identifier', default='')
+@click.option('--file-permissions', type=click.INT, default=0o644)
+@click.option('--uid', type=click.INT, default=501)
+@click.option('--gid', type=click.INT, default=501)
+@click.option('--creation-time', type=click.INT, default=time.time())
+@click.option('--last-modification-time', type=click.INT, default=time.time())
+def core_device_propose_empty_file(
+        service_provider: RemoteServiceDiscoveryService, domain: str, path: str, identifier: str, file_permissions: int,
+        uid: int, gid: int, creation_time: int, last_modification_time: int) -> None:
+    """ Write an empty file to given domain-path """
+    asyncio.run(core_device_propose_empty_file_task(service_provider, domain, path, identifier, file_permissions, uid,
+                                                    gid, creation_time, last_modification_time))
 
 
 async def core_device_list_launch_application_task(
@@ -1213,3 +1238,26 @@ async def core_device_list_apps_task(service_provider: RemoteServiceDiscoverySer
 def core_device_list_apps(service_provider: RemoteServiceDiscoveryService) -> None:
     """ Get application list """
     asyncio.run(core_device_list_apps_task(service_provider))
+
+
+async def core_device_sysdiagnose_task(service_provider: RemoteServiceDiscoveryService, output: str) -> None:
+    output = Path(output)
+    async with DiagnosticsServiceService(service_provider) as service:
+        response = await service.capture_sysdiagnose(False)
+        logger.info(f'Operation response: {response}')
+        if output.is_dir():
+            output /= response.preferred_filename
+        logger.info(f'Downloading sysdiagnose to: {output}')
+
+        # get the file over lockdownd which is WAYYY faster
+        lockdown = create_using_usbmux(service_provider.udid)
+        with CrashReportsManager(lockdown) as crash_reports_manager:
+            crash_reports_manager.afc.pull(posixpath.join(f'/DiagnosticLogs/sysdiagnose/{response.preferred_filename}'),
+                                           output)
+
+
+@core_device.command('sysdiagnose', cls=RSDCommand)
+@click.argument('output', type=click.Path(dir_okay=True, file_okay=True, exists=True))
+def core_device_sysdiagnose(service_provider: RemoteServiceDiscoveryService, output: str) -> None:
+    """ Execute sysdiagnose and fetch the output file """
+    asyncio.run(core_device_sysdiagnose_task(service_provider, output))

@@ -12,7 +12,7 @@ from contextlib import contextmanager, suppress
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from ssl import SSLZeroReturnError
+from ssl import SSLError, SSLZeroReturnError
 from typing import Optional
 
 from cryptography import x509
@@ -66,7 +66,7 @@ def _reconnect_on_remote_close(f):
     def _inner_reconnect_on_remote_close(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except (BrokenPipeError, ConnectionTerminatedError):
+        except (BrokenPipeError, ConnectionTerminatedError, SSLError):
             _reconnect(args[0])
             return f(*args, **kwargs)
         except ConnectionAbortedError:
@@ -560,8 +560,8 @@ class LockdownClient(ABC, LockdownServiceProvider):
             message.update(options)
         response = self.service.send_recv_plist(message)
 
-        if verify_request and response['Request'] != request:
-            raise LockdownError(f'incorrect response returned. got {response["Request"]} instead of {request}')
+        if verify_request and response.get('Request') != request:
+            raise LockdownError(f'incorrect response returned. got {response}')
 
         error = response.get('Error')
         if error is not None:

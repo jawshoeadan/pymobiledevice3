@@ -2,6 +2,7 @@ import json
 import typing
 from dataclasses import dataclass
 from enum import Enum, IntEnum
+from typing import Generator
 
 from packaging.version import Version
 
@@ -24,8 +25,52 @@ class AXAuditInspectorFocus_v1(SerializedObject):
         return self._fields.get('CaptionTextValue_v1')
 
     @property
+    def spoken_description(self) -> str:
+        return self._fields.get('SpokenDescriptionValue_v1')
+
+    @property
     def element(self) -> bytes:
         return self._fields.get('ElementValue_v1')
+
+    @property
+    def platform_identifier(self) -> str:
+        """Converts the element bytes to a hexadecimal string."""
+        return self.element.identifier.hex().upper()
+
+    @property
+    def estimated_uid(self) -> str:
+        """Generates a UID from the platform identifier."""
+        hex_value = self.platform_identifier
+
+        if len(hex_value) % 2 != 0:
+            raise ValueError("Hex value length must be even.")
+
+        hex_bytes = bytes.fromhex(hex_value)
+
+        if len(hex_bytes) < 16:
+            raise ValueError("Hex value must contain at least 16 bytes.")
+
+        # Extract TimeLow bytes (indexes 12 to 15)
+        time_low_bytes = hex_bytes[12:16]
+        time_low = time_low_bytes.hex().upper()
+
+        # Extract ClockSeq bytes (indexes 0 to 1)
+        clock_seq_bytes = hex_bytes[0:2]
+        clock_seq = clock_seq_bytes.hex().upper()
+
+        # Construct UID with placeholder values for unused parts
+        uid = f"{time_low}-0000-0000-{clock_seq}-000000000000"
+
+        return uid
+
+    def to_dict(self) -> dict:
+        """Serializes the focus element into a dictionary."""
+        return {
+            'platform_identifier': self.platform_identifier,
+            'estimated_uid': self.estimated_uid,
+            'caption': self.caption,
+            'spoken_description': self.spoken_description
+        }
 
     def __str__(self):
         return f'<Focused ElementCaption: {self.caption}>'
@@ -37,7 +82,7 @@ class AXAuditElement_v1(SerializedObject):
 
     @property
     def identifier(self) -> bytes:
-        return self._fields['PlatformElementValue_v1'].NSdata
+        return self._fields['PlatformElementValue_v1']
 
     def __repr__(self):
         return f'<Element: {self.identifier}>'
@@ -369,3 +414,30 @@ class AccessibilityAudit(RemoteServer):
         self.broadcast.deviceUpdateAccessibilitySetting_withValue_(
             MessageAux().append_obj(setting).append_obj({'ObjectType': 'passthrough', 'Value': value}),
             expects_reply=False)
+
+    def reset_settings(self) -> None:
+        self.broadcast.deviceResetToDefaultAccessibilitySettings()
+
+    def iter_elements(self) -> Generator[AXAuditInspectorFocus_v1, None, None]:
+        iterator = self.iter_events()
+
+        # every focus change is expected publish a "hostInspectorCurrentElementChanged:"
+        self.move_focus_next()
+
+        first_item = None
+
+        for event in iterator:
+            if event.name != 'hostInspectorCurrentElementChanged:':
+                # ignore any other events
+                continue
+
+            # each such event should contain exactly one element that became in focus
+            current_item = event.data[0]
+
+            if first_item is None:
+                first_item = current_item
+            elif first_item.caption == current_item.caption:
+                break  # Break if we encounter the first item again (loop)
+
+            yield current_item
+            self.move_focus_next()

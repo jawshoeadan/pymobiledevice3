@@ -16,8 +16,8 @@ from pymobiledevice3.exceptions import AccessDeniedError, CloudConfigurationAlre
     ConnectionFailedToUsbmuxdError, DeprecationError, DeveloperModeError, DeveloperModeIsNotEnabledError, \
     DeviceHasPasscodeSetError, DeviceNotFoundError, FeatureNotSupportedError, InternalError, InvalidServiceError, \
     MessageNotSupportedError, MissingValueError, NoDeviceConnectedError, NotEnoughDiskSpaceError, NotPairedError, \
-    OSNotSupportedError, PairingDialogResponsePendingError, PasswordRequiredError, RSDRequiredError, \
-    SetProhibitedError, TunneldConnectionError, UserDeniedPairingError
+    OSNotSupportedError, PairingDialogResponsePendingError, PasswordRequiredError, QuicProtocolNotSupportedError, \
+    RSDRequiredError, SetProhibitedError, TunneldConnectionError, UserDeniedPairingError
 from pymobiledevice3.osu.os_utils import get_os_utils
 
 coloredlogs.install(level=logging.INFO)
@@ -86,6 +86,7 @@ CLI_GROUPS = {
     'usbmux': 'usbmux',
     'webinspector': 'webinspector',
     'version': 'version',
+    'install-completions': 'completions',
 }
 
 
@@ -244,6 +245,8 @@ def main() -> None:
         logger.error(
             f'Missing implementation of `{e.feature}` on `{e.os_name}`. To add support, consider contributing at '
             f'https://github.com/doronz88/pymobiledevice3.')
+    except QuicProtocolNotSupportedError as e:
+        logger.error(str(e))
 
 
 if __name__ == '__main__':

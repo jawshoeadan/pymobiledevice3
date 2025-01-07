@@ -14,7 +14,8 @@ __all__ = [
     'LaunchingApplicationError', 'BadCommandError', 'BadDevError', 'ConnectionFailedError', 'CoreDeviceError',
     'AccessDeniedError', 'RSDRequiredError', 'SysdiagnoseTimeoutError', 'GetProhibitedError',
     'FeatureNotSupportedError', 'OSNotSupportedError', 'DeprecationError', 'NotEnoughDiskSpaceError',
-    'CloudConfigurationAlreadyPresentError'
+    'CloudConfigurationAlreadyPresentError', 'QuicProtocolNotSupportedError', 'RemotePairingCompletedError',
+    'DisableMemoryLimitError',
 ]
 
 from typing import Optional
@@ -390,3 +391,23 @@ class FeatureNotSupportedError(SupportError):
     def __init__(self, os_name, feature):
         super().__init__(os_name)
         self.feature = feature
+
+
+class QuicProtocolNotSupportedError(PyMobileDevice3Exception):
+    """ QUIC tunnel support was removed on iOS 18.2+ """
+    pass
+
+
+class RemotePairingCompletedError(PyMobileDevice3Exception):
+    """
+    Raised upon pairing completion using the `remotepairingdeviced` service (RemoteXPC).
+
+    remotepairingdeviced closes connection after pairing, so client must re-establish it after pairing is
+    completed.
+    """
+    pass
+
+
+class DisableMemoryLimitError(PyMobileDevice3Exception):
+    """ Disabling memory limit fails. """
+    pass
