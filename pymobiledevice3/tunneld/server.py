@@ -13,6 +13,7 @@ from typing import Optional, Union
 
 import construct
 import fastapi
+from pymobiledevice3.services.heartbeat import HeartbeatService
 import uvicorn
 from construct import StreamError
 from fastapi import FastAPI
