@@ -6,6 +6,7 @@ import multiprocessing
 import os
 import plistlib
 import signal
+import time
 import traceback
 import base64
 from contextlib import asynccontextmanager, suppress
@@ -485,11 +486,8 @@ class TunneldRunner:
 
                         logger.debug(f"Creating CoreDeviceTunnelProxy for UDID: {udid}")
                         ld_service_provider = create_using_tcp(identifier=udid, hostname=ip, pair_record=pair_record_unwrapped)
-                        if udid not in self._heartbeat_processes:
-                            background_process = self.get_or_create_heartbeat_process(udid, ip, pair_record_unwrapped)
-                            return fastapi.Response(status_code=200, content='Started heartbeat, try again in a second')
-                        else:
-                            background_process = self.get_or_create_heartbeat_process(udid, ip, pair_record_unwrapped)
+                        background_process = self.get_or_create_heartbeat_process(udid, ip, pair_record_unwrapped)
+                        time.sleep(2)
                         service = CoreDeviceTunnelProxy(ld_service_provider)
                         logger.info(f"CoreDeviceTunnelProxy created: {service}")
                         task = asyncio.create_task(
